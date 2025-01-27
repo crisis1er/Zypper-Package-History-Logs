@@ -12,21 +12,14 @@ awk -F'|' 'BEGIN {print "Date/Heure | Action | Paquet | Version "}
 {printf "%-20s| %-8s| %-28s| %-12s\n", $1, $2, $3, $4}'
 
 ## Sample Output
-Date/Heure | Action | Paquet | Version
+Date/Heure          | Action   | Paquet/Commande              | Version      
+2025-01-27 00:22:15 | command | root@unixlinuxpro           | 'zypper' 'dup'
 
-2025-01-27 00:25:03 | remove | ovpn-dco-kmp-default | 0.2.20241216~git0.a08b2fd_k6.13.0_1-1.22
+2025-01-27 00:25:03 | remove  | ovpn-dco-kmp-default        | 0.2.20241216~git0.a08b2fd_k6.13.0_1-1.22
 
-2025-01-27 00:25:43 | install | chromium | 132.0.6834.110-1.1
+2025-01-27 00:25:43 | install | chromium                    | 132.0.6834.110-1.1
 
-2025-01-27 00:25:51 | install | libQt6Bluetooth6 | 6.8.1-3.1
-
-2025-01-27 00:25:54 | install | libQt6Designer6 | 6.8.1-2.1
-
-2025-01-27 00:25:57 | install | libQt6Help6 | 6.8.1-2.1
-
-2025-01-27 00:26:00 | install | libQt6Nfc6 | 6.8.1-3.1
-
-2025-01-27 00:26:04 | install | libQt6Quick3DAssetImport6 | 6.8.1-2.1
+2025-01-27 00:25:51 | install | libQt6Bluetooth6            | 6.8.1-3.1   
 
 ## Tools Used
 - **grep**: Searches for specific patterns in the history file
