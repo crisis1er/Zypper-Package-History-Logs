@@ -1,0 +1,11 @@
+# System files
+.DS_Store
+*~
+
+# IDE files
+.idea/
+.vscode/
+
+# Temporary files
+*.log
+*.tmp
