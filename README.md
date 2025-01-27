@@ -13,12 +13,19 @@ awk -F'|' 'BEGIN {print "Date/Heure | Action | Paquet | Version "}
 
 ## Sample Output
 Date/Heure | Action | Paquet | Version
+
 2025-01-27 00:25:03 | remove | ovpn-dco-kmp-default | 0.2.20241216~git0.a08b2fd_k6.13.0_1-1.22
+
 2025-01-27 00:25:43 | install | chromium | 132.0.6834.110-1.1
+
 2025-01-27 00:25:51 | install | libQt6Bluetooth6 | 6.8.1-3.1
+
 2025-01-27 00:25:54 | install | libQt6Designer6 | 6.8.1-2.1
+
 2025-01-27 00:25:57 | install | libQt6Help6 | 6.8.1-2.1
+
 2025-01-27 00:26:00 | install | libQt6Nfc6 | 6.8.1-3.1
+
 2025-01-27 00:26:04 | install | libQt6Quick3DAssetImport6 | 6.8.1-2.1
 
 ## Tools Used
