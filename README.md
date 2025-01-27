@@ -1,10 +1,5 @@
-# Zypper-Package-History-Logs
-A powerful command-line tool for OpenSUSE users to quickly check installed, removed packages, and executed commands on their system for a specific date. This tool parses the Zypper history file located at /var/log/zypp/history to extract and format package management operations as well as Zypper commands 
-
-# OpenSUSE Zypper History Tracker
-
 ## Overview
-A powerful command-line tool for OpenSUSE users to quickly check installed/removed packages on their system for a specific date. This tool parses the Zypper history file located at `/var/log/zypp/history` to extract and format package management operations.
+zypper-history-v2.sh is a powerful and user-friendly command-line tool designed for openSUSE users to analyze their Zypper package management history. This script parses the Zypper history file (/var/log/zypp/history) and provides a formatted summary of actions such as installed, removed packages, and executed commands. Additionally, it allows users to view the Zypper log (zypper-log) for a complete overview of system operations.
 
 ## Command
 grep -E "\|install\||\|remove ?\||\|command" /var/log/zypp/history | grep "$(date '+%Y-%m-%d')" | awk -F'|' 'BEGIN {print "Date/Heure          | Action   | Paquet/Commande              | Version      "}
