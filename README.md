@@ -7,3 +7,40 @@ A powerful command-line utility for openSUSE users that provides a formatted vie
 A powerful command-line tool for OpenSUSE users to quickly check installed/removed packages on their system for a specific date. This tool parses the Zypper history file located at `/var/log/zypp/history` to extract and format package management operations.
 
 ## Command
+grep -E "|install|||remove" /var/log/zypp/history | grep "$(date '+%Y-%m-%d')" |
+awk -F'|' 'BEGIN {print "Date/Heure | Action | Paquet | Version "}
+{printf "%-20s| %-8s| %-28s| %-12s\n", $1, $2, $3, $4}'
+
+## Sample Output
+Date/Heure | Action | Paquet | Version
+2025-01-27 00:25:03 | remove | ovpn-dco-kmp-default | 0.2.20241216~git0.a08b2fd_k6.13.0_1-1.22
+2025-01-27 00:25:43 | install | chromium | 132.0.6834.110-1.1
+2025-01-27 00:25:51 | install | libQt6Bluetooth6 | 6.8.1-3.1
+2025-01-27 00:25:54 | install | libQt6Designer6 | 6.8.1-2.1
+2025-01-27 00:25:57 | install | libQt6Help6 | 6.8.1-2.1
+2025-01-27 00:26:00 | install | libQt6Nfc6 | 6.8.1-3.1
+2025-01-27 00:26:04 | install | libQt6Quick3DAssetImport6 | 6.8.1-2.1
+
+## Tools Used
+- **grep**: Searches for specific patterns in the history file
+- **awk**: Formats the extracted data (titles and columns)
+- **date**: Obtains date in desired format
+- **Pipes (|)**: Chains commands together
+
+## Date Format Options
+- Current date: `grep $(date '+%Y-%m-%d')`
+- Specific date: `grep "2025-01-25"`
+
+## Practical Use Case
+This tool is particularly useful for troubleshooting. For example, if OpenVPN stops working after an update, the command can reveal that a module or dependency was removed:
+
+Date/Heure | Action | Paquet | Version
+2025-01-27 00:25:03 | remove | ovpn-dco-kmp-default | 0.2.20241216~git0.a08b2fd_k6.13.0_1-1.22
+
+
+## Contributing
+Feel free to submit issues and enhancement requests!
+
+## License
+[MIT]
+
