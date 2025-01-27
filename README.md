@@ -7,9 +7,9 @@ A powerful command-line utility for openSUSE users that provides a formatted vie
 A powerful command-line tool for OpenSUSE users to quickly check installed/removed packages on their system for a specific date. This tool parses the Zypper history file located at `/var/log/zypp/history` to extract and format package management operations.
 
 ## Command
-grep -E "|install|||remove" /var/log/zypp/history | grep "$(date '+%Y-%m-%d')" |
-awk -F'|' 'BEGIN {print "Date/Heure | Action | Paquet | Version "}
+grep -E "\|install\||\|remove ?\||\|command" /var/log/zypp/history | grep "$(date '+%Y-%m-%d')" | awk -F'|' 'BEGIN {print "Date/Heure          | Action   | Paquet/Commande              | Version      "}
 {printf "%-20s| %-8s| %-28s| %-12s\n", $1, $2, $3, $4}'
+
 
 ## Sample Output
 Date/Heure          | Action   | Paquet/Commande              | Version      
