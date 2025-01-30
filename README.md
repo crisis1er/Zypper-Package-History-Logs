@@ -2,12 +2,6 @@
 Command : `zypper-history-beta_2.sh`
 is a practical and efficient command-line tool for openSUSE users to analyze their Zypper package management history. This script parses the Zypper history file (/var/log/zypp/history) and provides a clear, formatted summary of actions such as installed, removed packages, and executed commands. It is particularly useful for troubleshooting and auditing system changes.
 
-# Package History
-grep -E "\|install\||\|remove ?\||\|command" /var/log/zypp/history | grep "$DATE" | awk -F'|' '{printf "%-20s|%-8s|%-28s|%-12s\n", $1, $2, $3, $4}'
-
-# Command Log
-zypper log | grep "^$DATE" | awk '{printf "%-19s | %-7s | ", $1" "$2, $3; for(i=5;i<=NF;i++) printf $i" "}'
-
 ## Main Commands
 
 ### 1. Package History Extraction
