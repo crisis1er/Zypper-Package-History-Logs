@@ -21,7 +21,7 @@ zypper log \
 | grep "^$DATE" \
 | awk 'BEGIN {print "Time|PID|Command"} 
        {printf "%-19s | %-7s | ", $1" "$2, $3; for(i=5;i<=NF;i++) printf $i" "; print ""}'
-
+```
 ## Tools Used
 
 - **`grep`**: Pattern matching in log files (`install`/`remove`/`command` actions)
