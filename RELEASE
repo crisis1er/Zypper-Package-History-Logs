@@ -1,6 +1,46 @@
-# RELEASE
+# RELEASE — Zypper-Package-History-Logs
 
-Version: v4.2
-Date:    2026-04-05
+Version:  v4.2
+Date:     2026-04-04
+Platform: openSUSE Tumbleweed
+Script:   /usr/local/bin/zypper-history
 
-See CHANGELOG.md for details.
+---
+
+## What's in this release
+
+### New features
+- Interactive listing of all days with recorded zypper activity — shows package and command counts per day
+- Dynamic repository color assignment at runtime via `zypper repos` — works with any user repository configuration, no hardcoded repo names
+
+### Output
+- Full ANSI color support — install (green), remove (red), per-repository colors
+- Paginated output via `less -R` — navigable history for long logs
+- CSV export to `~/Audits/` with restricted permissions (600)
+
+### Reliability
+- `set -euo pipefail` — strict error handling, fails fast on unexpected input
+- Safe IFS — protects against word splitting in package names
+- Strict date validation: format check, calendar bounds, future date rejection
+- Root check with interactive sudo fallback
+
+### Interface
+- `-h` / `--help` — usage and examples
+- `-v` / `--version` — displays current version
+- Multi-language message system (French)
+
+---
+
+## Usage
+
+```bash
+# Install
+sudo cp zypper-history /usr/local/bin/
+sudo chmod +x /usr/local/bin/zypper-history
+
+# Show history for a specific date
+sudo zypper-history 2026-04-04
+
+# List all days with activity
+sudo zypper-history --list
+```
