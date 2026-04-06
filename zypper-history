@@ -1,13 +1,13 @@
 #!/bin/bash
 # Script: zypper-history
-# Version: 5.0 — filters, package search, last N days, stats
+# Version: 5.1 — retroactive downgrade detection, dup log viewer, radd/rremove display
 # Last Updated: 2026-04-06
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # ==================== VERSION INFO ====================
-SCRIPT_VERSION="5.0"
+SCRIPT_VERSION="5.1"
 SCRIPT_DATE="2026-04-06"
 SCRIPT_AUTHOR="SafeITExperts"
 SCRIPT_GITHUB="https://github.com/crisis1er/Zypper-Package-History-Logs/tree/main"
@@ -47,6 +47,12 @@ declare -A MSG=(
     [search_title]="RECHERCHE PAQUET DANS TOUT L'HISTORIQUE"
     [last_days_title]="HISTORIQUE DES"
     [no_package]="❌ Aucune occurrence trouvée pour le paquet :"
+    [downgrades_title]="DOWNGRADES / RÉINSTALLATIONS DÉTECTÉS"
+    [downgrades_hint]="(heuristique : paquet supprimé + réinstallé le même jour)"
+    [no_downgrades]="Aucun downgrade/réinstallation détecté."
+    [dup_log_title]="LOG DÉTAILLÉ DES DUP (zyp-dup)"
+    [no_dup_log]="❌ Aucun log trouvé dans /var/log/zypper-changes-detailed.log"
+    [repos_title]="DÉPÔTS (ajout/suppression)"
 )
 
 # ==================== COULEURS ANSI ====================
@@ -109,6 +115,8 @@ color_action() {
     case "$action" in
         "install") echo -e "${COLOR[INSTALL]}${COLOR[BOLD]}${action}${COLOR[RESET]}" ;;
         "remove")  echo -e "${COLOR[REMOVE]}${COLOR[BOLD]}${action}${COLOR[RESET]}" ;;
+        "radd")    echo -e "${COLOR[INSTALL]}${action}${COLOR[RESET]}" ;;
+        "rremove") echo -e "${COLOR[REMOVE]}${action}${COLOR[RESET]}" ;;
         *)         echo "$action" ;;
     esac
 }
@@ -159,6 +167,8 @@ show_help() {
   zypper-history -p <paquet>        Recherche dans tout l'historique
   zypper-history -l <N>             N derniers jours
   zypper-history -s                 Statistiques globales
+  zypper-history -g [N]             Downgrades rétroactifs (N derniers jours actifs, défaut: 30)
+  zypper-history -G                 Log détaillé zyp-dup (/var/log/zypper-changes-detailed.log)
   zypper-history -h                 Cette aide
   zypper-history -v                 Version
 
@@ -169,6 +179,9 @@ show_help() {
   zypper-history -p curl            Toutes les fois où curl a été touché
   zypper-history -l 7               Les 7 derniers jours
   zypper-history -s                 Stats globales
+  zypper-history -g                 Downgrades/réinstallations (30 derniers jours actifs)
+  zypper-history -g 60              Downgrades sur 60 derniers jours actifs
+  zypper-history -G                 Voir le log des zypper dup (zyp-dup)
 
 🎨 COULEURS
   🟢 install (Vert)      Paquet installé
@@ -272,9 +285,10 @@ display_history() {
     local HISTORY_DATA=$2
     local FILTER="${3:-}"   # installs | removes | "" (tout)
 
-    local COMMAND_DATA PACKAGE_DATA
+    local COMMAND_DATA PACKAGE_DATA REPO_DATA
     COMMAND_DATA=$(echo "$HISTORY_DATA" | grep "|command|" || true)
     PACKAGE_DATA=$(echo "$HISTORY_DATA" | grep -E "\|install\||\|remove ?\|" || true)
+    REPO_DATA=$(echo "$HISTORY_DATA" | grep -E "\|radd\||\|rremove\|" || true)
 
     # Appliquer le filtre
     case "$FILTER" in
@@ -339,7 +353,28 @@ display_history() {
         echo ""
     fi
 
-    if [[ -z "$COMMAND_DATA" && -z "$PACKAGE_DATA" ]]; then
+    if [[ -n "$REPO_DATA" && "$FILTER" == "" ]]; then
+        echo -e "${COLOR[HEADER]}${MSG[repos_title]} - $DATE${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo "$REPO_DATA" | awk -F'|' 'BEGIN {
+            print "Date/Heure          | Action   | Alias/URL"
+            print "=========================================================================="
+        } {
+            heure = $1; action = $2; alias = $3; detail = $4
+            printf "%-20s| %-8s| %s %s\n", heure, action, alias, detail
+        }' | while IFS= read -r line; do
+            if [[ "$line" =~ "radd" ]]; then
+                echo -e "${COLOR[INSTALL]}${line}${COLOR[RESET]}"
+            elif [[ "$line" =~ "rremove" ]]; then
+                echo -e "${COLOR[REMOVE]}${line}${COLOR[RESET]}"
+            else
+                echo "$line"
+            fi
+        done
+        echo ""
+    fi
+
+    if [[ -z "$COMMAND_DATA" && -z "$PACKAGE_DATA" && -z "$REPO_DATA" ]]; then
         echo "${MSG[no_data]} $DATE"
         echo ""
     fi
@@ -490,6 +525,77 @@ show_stats() {
     } | less -R
 }
 
+# ==================== NOUVELLE FONCTION: Downgrades rétroactifs ====================
+show_downgrades() {
+    local N="${1:-30}"
+    if [[ ! -f /var/log/zypp/history ]]; then
+        echo "${MSG[no_history]}"; exit 1
+    fi
+
+    local ALL_DATA
+    ALL_DATA=$(grep -v '^#' /var/log/zypp/history | grep -E "\|install\||\|remove ?\|" || true)
+
+    local DATES
+    DATES=$(echo "$ALL_DATA" | awk -F'|' '{print substr($1,1,10)}' | sort -u | tail -n "$N")
+
+    {
+        echo ""
+        echo -e "${COLOR[HEADER]}${MSG[downgrades_title]}${COLOR[RESET]}"
+        echo -e "${COLOR[TYPE]}${MSG[downgrades_hint]}${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo ""
+
+        local found=0
+        while read -r date; do
+            [[ -z "$date" ]] && continue
+            local day_data removed installed candidates
+            day_data=$(echo "$ALL_DATA" | grep "^${date}")
+            removed=$(echo "$day_data" | grep -E "\|remove ?\|" | awk -F'|' '{gsub(/ /,"",$3); print $3}' | sort -u)
+            installed=$(echo "$day_data" | grep "|install|" | awk -F'|' '{gsub(/ /,"",$3); print $3}' | sort -u)
+
+            [[ -z "$removed" || -z "$installed" ]] && continue
+            candidates=$(comm -12 <(echo "$removed") <(echo "$installed") 2>/dev/null || true)
+            [[ -z "$candidates" ]] && continue
+
+            echo -e "${COLOR[DATE]}$date${COLOR[RESET]}"
+            while IFS= read -r pkg; do
+                [[ -z "$pkg" ]] && continue
+                local old_ver new_ver new_repo
+                old_ver=$(echo "$day_data" | grep -E "\|remove ?\|" | awk -F'|' -v p="$pkg" '{gsub(/ /,"",$3); if($3==p) print $4}' | head -1)
+                new_ver=$(echo "$day_data" | grep "|install|" | awk -F'|' -v p="$pkg" '{gsub(/ /,"",$3); if($3==p) print $4}' | head -1)
+                new_repo=$(echo "$day_data" | grep "|install|" | awk -F'|' -v p="$pkg" '{gsub(/ /,"",$3); if($3==p) print $7}' | head -1)
+                echo -e "  ${COLOR[REMOVE]}▼ ${pkg}${COLOR[RESET]}  ${old_ver} → ${new_ver}  ${COLOR[TYPE]}[${new_repo}]${COLOR[RESET]}"
+                ((found++)) || true
+            done <<< "$candidates"
+            echo ""
+        done <<< "$DATES"
+
+        if [[ "$found" -eq 0 ]]; then
+            echo "${MSG[no_downgrades]}"
+            echo ""
+        fi
+        echo "${MSG[quit_help]}"
+    } | less -R
+}
+
+# ==================== NOUVELLE FONCTION: Afficher log zyp-dup ====================
+show_dup_log() {
+    local LOG="/var/log/zypper-changes-detailed.log"
+    if [[ ! -f "$LOG" ]]; then
+        echo "${MSG[no_dup_log]}"
+        exit 0
+    fi
+    {
+        echo ""
+        echo -e "${COLOR[HEADER]}${MSG[dup_log_title]}${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo ""
+        cat "$LOG"
+        echo ""
+        echo "${MSG[quit_help]}"
+    } | less -R
+}
+
 # ==================== TRAITEMENT DES OPTIONS ====================
 check_root "$@"
 build_repo_colors
@@ -499,6 +605,9 @@ FILTER_MODE=""
 PACKAGE_SEARCH=""
 LAST_DAYS=0
 STATS_MODE=false
+DOWNGRADES_MODE=false
+DOWNGRADES_N=30
+DUP_LOG_MODE=false
 DATE_ARG=""
 
 while [[ $# -gt 0 ]]; do
@@ -510,6 +619,13 @@ while [[ $# -gt 0 ]]; do
         -p|--package)     PACKAGE_SEARCH="$2"; shift 2 ;;
         -l|--last)        LAST_DAYS="$2"; shift 2 ;;
         -s|--stats)       STATS_MODE=true; shift ;;
+        -g|--downgrades)
+            DOWNGRADES_MODE=true
+            if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
+                DOWNGRADES_N="$2"; shift
+            fi
+            shift ;;
+        -G|--dup-log)     DUP_LOG_MODE=true; shift ;;
         -d|--date)        DATE_ARG="$2"; validate_date_strict "$2" || exit 1; shift 2 ;;
         *) echo "${MSG[unknown_option]} $1 — ${MSG[usage_help]}" >&2; exit 1 ;;
     esac
@@ -525,6 +641,18 @@ fi
 # Statistiques globales
 if $STATS_MODE; then
     show_stats
+    exit 0
+fi
+
+# Downgrades rétroactifs
+if $DOWNGRADES_MODE; then
+    show_downgrades "$DOWNGRADES_N"
+    exit 0
+fi
+
+# Log détaillé zyp-dup
+if $DUP_LOG_MODE; then
+    show_dup_log
     exit 0
 fi
 

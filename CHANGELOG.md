@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [5.1] — 2026-04-06
+
+### Added
+- `-g / --downgrades [N]` — retroactive downgrade detection: finds packages removed and reinstalled on the same day (heuristic), over the last N active days (default: 30). Shows old version → new version and repository.
+- `-G / --dup-log` — displays `/var/log/zypper-changes-detailed.log` with `less -R`, written by the companion `zyp-dup` wrapper before each `zypper dup`.
+- `radd` / `rremove` display in `display_history()` — repository add/remove events now appear as a "DÉPÔTS" section, colorized (green for radd, red for rremove).
+
+### Changed
+- `color_action()` extended to handle `radd` (green) and `rremove` (red)
+- Help updated with new flags and examples
+- Version bump: 5.0 → 5.1
+
+### New companion script
+- `zyp-dup` — wrapper for `zypper dup` that runs a dry-run first, parses downgrades/vendor changes/removals, displays a colored summary with current versions, logs all details to `/var/log/zypper-changes-detailed.log`, and asks confirmation before running the actual upgrade.
+
+---
+
 ## [5.0] — 2026-04-06
 
 ### Added

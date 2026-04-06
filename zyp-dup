@@ -1,0 +1,197 @@
+#!/bin/bash
+# zyp-dup — zypper dup wrapper with downgrade and vendor change tracking
+# Logs downgrades, vendor changes, removals to /var/log/zypper-changes-detailed.log
+# Version: 1.0 — 2026-04-06
+
+set -euo pipefail
+
+LOG="/var/log/zypper-changes-detailed.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+DATE=$(date '+%Y-%m-%d')
+
+# ==================== COULEURS ====================
+RED="\033[91m"
+YELLOW="\033[93m"
+GREEN="\033[92m"
+CYAN="\033[96m"
+BOLD="\033[1m"
+RESET="\033[0m"
+DIM="\033[2m"
+
+# ==================== ROOT CHECK ====================
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${YELLOW}⚠️  Droits root requis.${RESET}"
+    read -p "Continuer avec sudo ? [O/n] " r
+    if [[ "$r" =~ ^[OoYy] ]] || [[ -z "$r" ]]; then
+        exec sudo "$0" "$@"
+    else
+        echo "Annulation."; exit 1
+    fi
+fi
+
+# ==================== LOG INIT ====================
+touch "$LOG" 2>/dev/null || { echo -e "${RED}❌ Impossible d'écrire dans $LOG${RESET}"; exit 1; }
+
+# ==================== PARSER ====================
+parse_section() {
+    local header_pattern="$1"
+    local data="$2"
+    echo "$data" | awk -v pat="$header_pattern" '
+        $0 ~ pat        { in_s=1; next }
+        in_s && /^The following/ { in_s=0 }
+        in_s && /^[0-9]+ package/ { in_s=0 }
+        in_s && /^Package download/ { in_s=0 }
+        in_s && /^Overall/ { in_s=0 }
+        in_s && NF == 0 { in_s=0 }
+        in_s && NF > 0  { print }
+    ' | tr -s ' ' '\n' | grep -v '^$' | sort -u
+}
+
+count_lines() {
+    echo "$1" | grep -c '\S' 2>/dev/null || echo 0
+}
+
+pkg_version() {
+    rpm -q --qf "%{VERSION}-%{RELEASE}" "$1" 2>/dev/null || echo "?"
+}
+
+# ==================== DRY RUN ====================
+echo -e "\n${CYAN}${BOLD}╔══════════════════════════════════════════════════════════════╗${RESET}"
+echo -e "${CYAN}${BOLD}║         zyp-dup — Analyse pré-mise à jour                    ║${RESET}"
+echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════════╝${RESET}"
+echo -e "${DIM}Analyse en cours (zypper dup --dry-run)...${RESET}\n"
+
+DRY=$(LANG=C zypper --non-interactive dup --dry-run 2>&1) || true
+
+DOWNGRADED=$(parse_section "going to be downgraded" "$DRY")
+VENDOR=$(parse_section "going to change vendor" "$DRY")
+REMOVED=$(parse_section "going to be removed" "$DRY")
+UPGRADED=$(parse_section "going to be upgraded" "$DRY")
+NEW_PKG=$(parse_section "NEW packages" "$DRY")
+
+NB_DOWN=$(count_lines "$DOWNGRADED")
+NB_VENDOR=$(count_lines "$VENDOR")
+NB_REMOVED=$(count_lines "$REMOVED")
+NB_UPGRADED=$(count_lines "$UPGRADED")
+NB_NEW=$(count_lines "$NEW_PKG")
+
+# ==================== AFFICHAGE RÉSUMÉ ====================
+echo -e "${BOLD}Résumé de la mise à jour :${RESET}"
+echo "══════════════════════════════════════════════════════════════"
+echo -e "  ${GREEN}▶ Upgrades    : ${NB_UPGRADED}${RESET}"
+echo -e "  ${GREEN}▶ Nouveaux    : ${NB_NEW}${RESET}"
+
+if [[ "$NB_DOWN" -gt 0 ]]; then
+    echo -e "  ${RED}${BOLD}▼ Downgrades  : ${NB_DOWN} ← ATTENTION${RESET}"
+else
+    echo -e "  ${DIM}▼ Downgrades  : 0${RESET}"
+fi
+
+if [[ "$NB_VENDOR" -gt 0 ]]; then
+    echo -e "  ${YELLOW}${BOLD}⇄ Chgt fournisseur : ${NB_VENDOR} ← ATTENTION${RESET}"
+else
+    echo -e "  ${DIM}⇄ Chgt fournisseur : 0${RESET}"
+fi
+
+if [[ "$NB_REMOVED" -gt 0 ]]; then
+    echo -e "  ${RED}✕ Suppressions : ${NB_REMOVED} ← ATTENTION${RESET}"
+else
+    echo -e "  ${DIM}✕ Suppressions : 0${RESET}"
+fi
+echo "══════════════════════════════════════════════════════════════"
+
+# Détail des cas critiques
+if [[ "$NB_DOWN" -gt 0 ]]; then
+    echo -e "\n${RED}${BOLD}⚠️  Paquets qui vont être réduits (DOWNGRADE) :${RESET}"
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        current=$(pkg_version "$pkg")
+        echo -e "  ${RED}▼ ${pkg}${RESET}  ${DIM}(actuellement : ${current})${RESET}"
+    done <<< "$DOWNGRADED"
+fi
+
+if [[ "$NB_VENDOR" -gt 0 ]]; then
+    echo -e "\n${YELLOW}${BOLD}⚠️  Paquets qui changent de fournisseur :${RESET}"
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        current=$(pkg_version "$pkg")
+        echo -e "  ${YELLOW}⇄ ${pkg}${RESET}  ${DIM}(actuellement : ${current})${RESET}"
+    done <<< "$VENDOR"
+fi
+
+if [[ "$NB_REMOVED" -gt 0 ]]; then
+    echo -e "\n${RED}${BOLD}⚠️  Paquets qui vont être supprimés :${RESET}"
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        current=$(pkg_version "$pkg")
+        echo -e "  ${RED}✕ ${pkg}${RESET}  ${DIM}(actuellement : ${current})${RESET}"
+    done <<< "$REMOVED"
+fi
+
+# ==================== LOGGING PRÉ-DUP ====================
+{
+    echo ""
+    echo "=== zyp-dup — ${TIMESTAMP} ==="
+    echo "UPGRADES (${NB_UPGRADED}) :"
+    [[ -n "$UPGRADED" ]] && echo "$UPGRADED" | sed 's/^/  /' || echo "  (aucun)"
+    echo ""
+    echo "NOUVEAUX (${NB_NEW}) :"
+    [[ -n "$NEW_PKG" ]] && echo "$NEW_PKG" | sed 's/^/  /' || echo "  (aucun)"
+    echo ""
+    echo "DOWNGRADES (${NB_DOWN}) :"
+    if [[ -n "$DOWNGRADED" ]]; then
+        while IFS= read -r pkg; do
+            [[ -z "$pkg" ]] && continue
+            echo "  ▼ ${pkg}  [installé: $(pkg_version "$pkg")]"
+        done <<< "$DOWNGRADED"
+    else
+        echo "  (aucun)"
+    fi
+    echo ""
+    echo "CHANGEMENTS FOURNISSEUR (${NB_VENDOR}) :"
+    if [[ -n "$VENDOR" ]]; then
+        while IFS= read -r pkg; do
+            [[ -z "$pkg" ]] && continue
+            echo "  ⇄ ${pkg}  [installé: $(pkg_version "$pkg")]"
+        done <<< "$VENDOR"
+    else
+        echo "  (aucun)"
+    fi
+    echo ""
+    echo "SUPPRESSIONS (${NB_REMOVED}) :"
+    if [[ -n "$REMOVED" ]]; then
+        while IFS= read -r pkg; do
+            [[ -z "$pkg" ]] && continue
+            echo "  ✕ ${pkg}  [installé: $(pkg_version "$pkg")]"
+        done <<< "$REMOVED"
+    else
+        echo "  (aucun)"
+    fi
+    echo "--- pré-dup loggé ---"
+} >> "$LOG"
+
+# ==================== CONFIRMATION ====================
+echo ""
+if [[ "$NB_DOWN" -gt 0 || "$NB_VENDOR" -gt 0 || "$NB_REMOVED" -gt 0 ]]; then
+    echo -e "${YELLOW}${BOLD}Des changements critiques ont été détectés (voir ci-dessus).${RESET}"
+fi
+echo -e "Log sauvegardé dans : ${DIM}${LOG}${RESET}"
+echo ""
+read -p "$(echo -e "${BOLD}Lancer zypper dup ? [O/n] ${RESET}")" confirm
+if ! [[ "$confirm" =~ ^[OoYy] ]] && [[ -n "$confirm" ]]; then
+    echo -e "${YELLOW}Annulation.${RESET}"
+    echo "--- dup annulé par l'utilisateur ---" >> "$LOG"
+    exit 0
+fi
+
+# ==================== EXÉCUTION ====================
+echo -e "\n${GREEN}${BOLD}Lancement de zypper dup...${RESET}\n"
+echo "--- début zypper dup $(date '+%H:%M:%S') ---" >> "$LOG"
+
+zypper dup "$@"
+
+echo "--- fin zypper dup $(date '+%H:%M:%S') ---" >> "$LOG"
+echo "=== fin ===" >> "$LOG"
+
+echo -e "\n${GREEN}${BOLD}✓ zypper dup terminé.${RESET}"
+echo -e "Utilisez ${CYAN}zypper-history -G${RESET} pour consulter le log détaillé."
