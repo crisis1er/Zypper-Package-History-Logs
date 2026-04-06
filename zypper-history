@@ -1,14 +1,14 @@
 #!/bin/bash
-# Script: zypper-history.sh
-# Version: 4.1 (PROFESSIONAL - Validation + Multi-langue + COULEURS)
-# Last Updated: 2025-11-09
+# Script: zypper-history
+# Version: 5.0 — filters, package search, last N days, stats
+# Last Updated: 2026-04-06
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # ==================== VERSION INFO ====================
-SCRIPT_VERSION="4.2"
-SCRIPT_DATE="2026-04-04"
+SCRIPT_VERSION="5.0"
+SCRIPT_DATE="2026-04-06"
 SCRIPT_AUTHOR="SafeITExperts"
 SCRIPT_GITHUB="https://github.com/crisis1er/Zypper-Package-History-Logs/tree/main"
 
@@ -36,11 +36,17 @@ declare -A MSG=(
     [no_history]="Aucun historique trouvé dans /var/log/zypp/history"
     [commands_title]="COMMANDES ZYPPER (manuelles)"
     [packages_title]="PAQUETS (installation/suppression)"
+    [installs_title]="PAQUETS INSTALLÉS"
+    [removes_title]="PAQUETS SUPPRIMÉS"
     [end_history]="Fin de l'historique"
     [search_help]="Pour chercher un paquet: tapez '/' puis le nom, puis 'Entrée'"
     [quit_help]="Pour quitter: tapez 'q'"
     [unknown_option]="Option inconnue:"
     [usage_help]="Utilisez: zypper-history -h pour l'aide"
+    [stats_title]="STATISTIQUES GLOBALES — HISTORIQUE ZYPPER"
+    [search_title]="RECHERCHE PAQUET DANS TOUT L'HISTORIQUE"
+    [last_days_title]="HISTORIQUE DES"
+    [no_package]="❌ Aucune occurrence trouvée pour le paquet :"
 )
 
 # ==================== COULEURS ANSI ====================
@@ -55,6 +61,8 @@ declare -A COLOR=(
     [DEFAULT]="\033[37m"        # ⚪ Gris - autres
     [COMMAND]="\033[97m"        # Blanc bright - commandes
     [TYPE]="\033[90m"           # Gris foncé - type
+    [HEADER]="\033[95m"         # Magenta - titres sections
+    [DATE]="\033[36m"           # Cyan - dates
 )
 
 # Palette cyclique pour les dépôts tiers (attribuée dynamiquement)
@@ -74,12 +82,10 @@ declare -A REPO_COLORS
 
 # ==================== FONCTION: Construire la map dépôt → couleur ====================
 build_repo_colors() {
-    # Couleurs fixes pour les dépôts connus
     REPO_COLORS["repo-oss"]="${COLOR[REPO_OSS]}"
     REPO_COLORS["repo-update"]="${COLOR[REPO_UPDATE]}"
     REPO_COLORS["packman"]="${COLOR[PACKMAN]}"
 
-    # Attribution dynamique pour tous les autres dépôts
     local idx=0
     while read -r alias; do
         [[ -z "$alias" ]] && continue
@@ -101,15 +107,9 @@ color_depot() {
 color_action() {
     local action=$1
     case "$action" in
-        "install")
-            echo -e "${COLOR[INSTALL]}${COLOR[BOLD]}${action}${COLOR[RESET]}"
-            ;;
-        "remove")
-            echo -e "${COLOR[REMOVE]}${COLOR[BOLD]}${action}${COLOR[RESET]}"
-            ;;
-        *)
-            echo "$action"
-            ;;
+        "install") echo -e "${COLOR[INSTALL]}${COLOR[BOLD]}${action}${COLOR[RESET]}" ;;
+        "remove")  echo -e "${COLOR[REMOVE]}${COLOR[BOLD]}${action}${COLOR[RESET]}" ;;
+        *)         echo "$action" ;;
     esac
 }
 
@@ -128,87 +128,94 @@ check_root() {
     fi
 }
 
-# ==================== VALIDATION DE DATE RENFORCÉE ====================
+# ==================== VALIDATION DE DATE ====================
 validate_date_strict() {
     local DATE=$1
     if ! [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-        echo "${MSG[invalid_date]}" >&2
-        return 1
+        echo "${MSG[invalid_date]}" >&2; return 1
     fi
     if ! date -d "$DATE" >/dev/null 2>&1; then
-        echo "${MSG[date_format_error]}" >&2
-        return 1
+        echo "${MSG[date_format_error]}" >&2; return 1
     fi
     local TODAY=$(date '+%Y-%m-%d')
     if [[ "$DATE" > "$TODAY" ]]; then
-        echo "❌ La date ne peut pas être dans le futur (aujourd'hui: $TODAY)" >&2
-        return 1
+        echo "❌ La date ne peut pas être dans le futur (aujourd'hui: $TODAY)" >&2; return 1
     fi
     return 0
 }
 
-# ==================== FUNCTION: Display Help ====================
+# ==================== FUNCTION: Help ====================
 show_help() {
-    cat << 'HELP'
+    cat << HELP
 ================================================================================
-                   ZYPPER-HISTORY - Audit Complet Zypper
+                   ZYPPER-HISTORY v${SCRIPT_VERSION} - Audit Zypper openSUSE
 ================================================================================
 
-📋 DESCRIPTIF
-  zypper-history audit professionnel de l'historique Zypper sur openSUSE
+📋 USAGE
+  zypper-history                    Mode interactif (défaut)
+  zypper-history -d YYYY-MM-DD      Date spécifique directement
+  zypper-history -i [-d DATE]       Installs uniquement
+  zypper-history -r [-d DATE]       Suppressions uniquement
+  zypper-history -p <paquet>        Recherche dans tout l'historique
+  zypper-history -l <N>             N derniers jours
+  zypper-history -s                 Statistiques globales
+  zypper-history -h                 Cette aide
+  zypper-history -v                 Version
 
-🎨 COULEURS & LÉGENDE (Terminal)
-  Actions :
-    🟢 install (Vert)   = Paquet installé
-    🔴 remove  (Rouge)  = Paquet supprimé
-  
-  Dépôts :
-    🔵 repo-oss     (Bleu)    = Officiel openSUSE
-    🔷 repo-update  (Cyan)    = Mises à jour
-    🟡 packman      (Jaune)   = Communauté
-    🟣 home_*       (Magenta) = Custom
-    🟠 Tiers        (Orange)  = Microsoft, Mozilla, etc.
-    ⚪ Autres       (Gris)    = Non identifiés
+📋 EXEMPLES
+  zypper-history -d 2026-04-01      Historique du 1er avril
+  zypper-history -i                 Installs d'aujourd'hui
+  zypper-history -r -d 2026-04-01   Suppressions du 1er avril
+  zypper-history -p curl            Toutes les fois où curl a été touché
+  zypper-history -l 7               Les 7 derniers jours
+  zypper-history -s                 Stats globales
 
+🎨 COULEURS
+  🟢 install (Vert)      Paquet installé
+  🔴 remove  (Rouge)     Paquet supprimé
+  🔵 repo-oss (Bleu)     Officiel openSUSE
+  🔷 repo-update (Cyan)  Mises à jour
+  🟡 packman (Jaune)     Communauté
+  🟠 Tiers (Orange)      Microsoft, Mozilla, etc.
+  ⚪ Autres (Gris)       Non identifiés
 ================================================================================
 HELP
 }
 
-# ==================== FUNCTION: Display Version ====================
+# ==================== FUNCTION: Version ====================
 show_version() {
-    cat << VERSION
-zypper-history version $SCRIPT_VERSION
-Date: $SCRIPT_DATE
-Auteur: $SCRIPT_AUTHOR
-GitHub: $SCRIPT_GITHUB
-VERSION
+    echo "zypper-history version $SCRIPT_VERSION — $SCRIPT_DATE"
+    echo "Auteur: $SCRIPT_AUTHOR"
+    echo "GitHub: $SCRIPT_GITHUB"
 }
 
-# ==================== FUNCTION: Create CSV ====================
+# ==================== FUNCTION: CSV ====================
 create_csv() {
     local DATE=$1
     local HISTORY_DATA=$2
     local ORIGINAL_USER="${SUDO_USER:-$USER}"
     local AUDIT_DIR="/home/$ORIGINAL_USER/Audits"
     local CSV_FILE="$AUDIT_DIR/zypper-history-${DATE}.csv"
-    
+
     mkdir -p "$AUDIT_DIR"
     chown "$ORIGINAL_USER:$ORIGINAL_USER" "$AUDIT_DIR"
     chmod 0755 "$AUDIT_DIR"
-    
+
     if [[ -f "$CSV_FILE" ]]; then
         read -p "${MSG[csv_exists]} " replace
         if ! [[ "$replace" =~ ^[Oo] ]]; then
-            echo "Annulation."
-            return
+            echo "Annulation."; return
         fi
     fi
-    
+
     echo "Date,Heure,Type,Action,Utilisateur,Paquet,Version,Architecture,Depot,Commande" > "$CSV_FILE"
-    
-    COMMAND_DATA=$(echo "$HISTORY_DATA" | grep "|command|" || true)
-    if [[ -n "$COMMAND_DATA" ]]; then
-        echo "$COMMAND_DATA" | awk -F'|' '{
+
+    local CMD_DATA PKG_DATA
+    CMD_DATA=$(echo "$HISTORY_DATA" | grep "|command|" || true)
+    PKG_DATA=$(echo "$HISTORY_DATA" | grep -E "\|install\||\|remove ?\|" || true)
+
+    if [[ -n "$CMD_DATA" ]]; then
+        echo "$CMD_DATA" | awk -F'|' '{
             date = $1; time = substr(date, 12); date = substr(date, 1, 10)
             type = $2; utilisateur = $3; commande = $4
             for (i=5; i<=NF; i++) commande = commande "|" $i
@@ -216,20 +223,19 @@ create_csv() {
             printf "%s,%s,%s,,%s,,,,,\"%s\"\n", date, time, type, utilisateur, commande
         }' >> "$CSV_FILE"
     fi
-    
-    PACKAGE_DATA=$(echo "$HISTORY_DATA" | grep -E "\|install\||\|remove ?\|" || true)
-    if [[ -n "$PACKAGE_DATA" ]]; then
-        echo "$PACKAGE_DATA" | awk -F'|' '{
+
+    if [[ -n "$PKG_DATA" ]]; then
+        echo "$PKG_DATA" | awk -F'|' '{
             date = $1; time = substr(date, 12); date = substr(date, 1, 10)
             type = "package"; action = $2; gsub(/ /, "", action)
             paquet = $3; version = $4; arch = $5; depot = $7
             printf "%s,%s,%s,%s,,%s,%s,%s,%s,\n", date, time, type, action, paquet, version, arch, depot
         }' >> "$CSV_FILE"
     fi
-    
+
     chown "$ORIGINAL_USER:$ORIGINAL_USER" "$CSV_FILE"
     chmod 0600 "$CSV_FILE"
-    
+
     echo ""
     echo "${MSG[csv_created]}"
     echo "   ${MSG[csv_path]} $CSV_FILE"
@@ -237,23 +243,10 @@ create_csv() {
     echo "${MSG[csv_lines]} $(wc -l < "$CSV_FILE")"
 }
 
-# ==================== TRAITEMENT DES OPTIONS ====================
-check_root "$@"
-build_repo_colors
-
-if [[ $# -gt 0 ]]; then
-    case "$1" in
-        -h|--help) show_help; exit 0 ;;
-        -v|--version) show_version; exit 0 ;;
-        *) echo "${MSG[unknown_option]} $1" >&2; exit 1 ;;
-    esac
-fi
-
 # ==================== FONCTION: Lister les jours disponibles ====================
 list_available_dates() {
     if [[ ! -f /var/log/zypp/history ]]; then
-        echo "${MSG[no_history]}"
-        return
+        echo "${MSG[no_history]}"; return
     fi
     echo ""
     echo "${MSG[available_dates]}"
@@ -263,6 +256,7 @@ list_available_dates() {
         grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | \
         sort -u | \
         while read -r date; do
+            local nb_actions nb_cmds
             nb_actions=$(grep "^${date}" /var/log/zypp/history | grep -cE "\|install\||\|remove ?\|" || true)
             nb_cmds=$(grep "^${date}" /var/log/zypp/history | grep -c "|command|" || true)
             printf "  📅 %-12s  %2d paquet(s) install/supprimé(s)   %2d commande(s)\n" \
@@ -271,6 +265,289 @@ list_available_dates() {
     echo "===================================================================================="
     echo ""
 }
+
+# ==================== FONCTION: Afficher historique (réutilisable) ====================
+display_history() {
+    local DATE=$1
+    local HISTORY_DATA=$2
+    local FILTER="${3:-}"   # installs | removes | "" (tout)
+
+    local COMMAND_DATA PACKAGE_DATA
+    COMMAND_DATA=$(echo "$HISTORY_DATA" | grep "|command|" || true)
+    PACKAGE_DATA=$(echo "$HISTORY_DATA" | grep -E "\|install\||\|remove ?\|" || true)
+
+    # Appliquer le filtre
+    case "$FILTER" in
+        installs)
+            PACKAGE_DATA=$(echo "$PACKAGE_DATA" | grep "|install|" || true)
+            COMMAND_DATA=""
+            ;;
+        removes)
+            PACKAGE_DATA=$(echo "$PACKAGE_DATA" | grep -E "\|remove ?\|" || true)
+            COMMAND_DATA=""
+            ;;
+    esac
+
+    echo -e "${COLOR[DATE]}${MSG[select_date]} $DATE${COLOR[RESET]}"
+    echo "===================================================================================="
+    echo ""
+
+    if [[ -n "$COMMAND_DATA" && "$FILTER" == "" ]]; then
+        echo -e "${COLOR[HEADER]}${MSG[commands_title]} - $DATE${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo "$COMMAND_DATA" | awk -F'|' 'BEGIN {
+            print "Date/Heure          | Type    | Utilisateur        | Commande"
+            print "=========================================================================="
+        } {
+            heure = $1; type = $2; utilisateur = $3; commande = $4
+            for (i=5; i<=NF; i++) commande = commande "|" $i
+            printf "%-20s| %-7s| %-18s| %s\n", heure, type, utilisateur, commande
+        }'
+        echo ""
+    fi
+
+    if [[ -n "$PACKAGE_DATA" ]]; then
+        local title
+        case "$FILTER" in
+            installs) title="${MSG[installs_title]}" ;;
+            removes)  title="${MSG[removes_title]}" ;;
+            *)        title="${MSG[packages_title]}" ;;
+        esac
+        echo -e "${COLOR[HEADER]}${title} - $DATE${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo "$PACKAGE_DATA" | awk -F'|' 'BEGIN {
+            print "Date/Heure          | Action   | Paquet                      | Version      | Arch"
+        } {
+            heure = $1; action = $2; gsub(/ /, "", action)
+            paquet = $3; version = $4; arch = $5; depot = $7
+            printf "%-20s| %-8s| %-27s| %-12s| %s\n", heure, action, paquet, version, arch
+            printf "  └─ Dépôt: %s\n", depot
+        }' | while IFS= read -r line; do
+            if [[ "$line" =~ "Dépôt:" ]]; then
+                local depot colored_depot
+                depot=$(echo "$line" | sed 's/.*Dépôt: //')
+                colored_depot=$(color_depot "$depot")
+                echo "$line" | sed "s/Dépôt: .*/Dépôt: $colored_depot/"
+            elif [[ "$line" =~ "install" ]]; then
+                echo "$line" | sed "s/| install /| $(color_action 'install') /"
+            elif [[ "$line" =~ "remove" ]]; then
+                echo "$line" | sed "s/| remove /| $(color_action 'remove') /"
+            else
+                echo "$line"
+            fi
+        done
+        echo ""
+    fi
+
+    if [[ -z "$COMMAND_DATA" && -z "$PACKAGE_DATA" ]]; then
+        echo "${MSG[no_data]} $DATE"
+        echo ""
+    fi
+}
+
+# ==================== NOUVELLE FONCTION: Recherche paquet ====================
+search_package() {
+    local PKG=$1
+    if [[ ! -f /var/log/zypp/history ]]; then
+        echo "${MSG[no_history]}"; exit 1
+    fi
+
+    local RESULTS
+    RESULTS=$(grep -i "|${PKG}" /var/log/zypp/history | grep -E "\|install\||\|remove ?\|" || true)
+
+    if [[ -z "$RESULTS" ]]; then
+        echo -e "${COLOR[REMOVE]}${MSG[no_package]} ${PKG}${COLOR[RESET]}"
+        exit 0
+    fi
+
+    {
+        echo ""
+        echo -e "${COLOR[HEADER]}${MSG[search_title]} : ${COLOR[BOLD]}${PKG}${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo ""
+        echo "$RESULTS" | awk -F'|' 'BEGIN {
+            print "Date/Heure          | Action   | Paquet                      | Version      | Dépôt"
+            print "===================================================================================="
+        } {
+            heure = $1; action = $2; gsub(/ /, "", action)
+            paquet = $3; version = $4; depot = $7
+            printf "%-20s| %-8s| %-27s| %-12s| %s\n", heure, action, paquet, version, depot
+        }' | while IFS= read -r line; do
+            if [[ "$line" =~ "install" ]]; then
+                echo "$line" | sed "s/| install /| $(color_action 'install') /"
+            elif [[ "$line" =~ "remove" ]]; then
+                echo "$line" | sed "s/| remove /| $(color_action 'remove') /"
+            else
+                echo "$line"
+            fi
+        done
+        echo ""
+        local total inst rem
+        total=$(echo "$RESULTS" | wc -l)
+        inst=$(echo "$RESULTS" | grep -c "|install|" || true)
+        rem=$(echo "$RESULTS" | grep -cE "\|remove ?\|" || true)
+        echo "Total : ${total} occurrence(s) — ${inst} install(s), ${rem} suppression(s)"
+        echo ""
+        echo "${MSG[search_help]}"
+        echo "${MSG[quit_help]}"
+    } | less -R
+}
+
+# ==================== NOUVELLE FONCTION: N derniers jours ====================
+show_last_days() {
+    local N=$1
+    local FILTER="${2:-}"
+    if [[ ! -f /var/log/zypp/history ]]; then
+        echo "${MSG[no_history]}"; exit 1
+    fi
+
+    local DATES
+    DATES=$(grep -v '^#' /var/log/zypp/history | \
+        awk -F'|' '{print substr($1,1,10)}' | \
+        grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | \
+        sort -u | tail -n "$N")
+
+    if [[ -z "$DATES" ]]; then
+        echo "${MSG[no_history]}"; exit 0
+    fi
+
+    {
+        echo ""
+        echo -e "${COLOR[HEADER]}${MSG[last_days_title]} $N DERNIERS JOURS${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo ""
+        while read -r date; do
+            local DATA
+            DATA=$(grep "^${date}" /var/log/zypp/history 2>/dev/null || true)
+            [[ -z "$DATA" ]] && continue
+            display_history "$date" "$DATA" "$FILTER"
+            echo "------------------------------------------------------------------------------------"
+        done <<< "$DATES"
+        echo "${MSG[search_help]}"
+        echo "${MSG[quit_help]}"
+    } | less -R
+}
+
+# ==================== NOUVELLE FONCTION: Statistiques globales ====================
+show_stats() {
+    if [[ ! -f /var/log/zypp/history ]]; then
+        echo "${MSG[no_history]}"; exit 1
+    fi
+
+    local ALL_DATA
+    ALL_DATA=$(grep -v '^#' /var/log/zypp/history | grep -E "\|install\||\|remove ?\|" || true)
+
+    {
+        echo ""
+        echo -e "${COLOR[HEADER]}${MSG[stats_title]}${COLOR[RESET]}"
+        echo "===================================================================================="
+        echo ""
+
+        local total inst rem first_date last_date
+        total=$(echo "$ALL_DATA" | grep -c "." || true)
+        inst=$(echo "$ALL_DATA"  | grep -c "|install|" || true)
+        rem=$(echo "$ALL_DATA"   | grep -cE "\|remove ?\|" || true)
+        first_date=$(grep -v '^#' /var/log/zypp/history | awk -F'|' 'NR==1 {print substr($1,1,10)}')
+        last_date=$(grep -v '^#' /var/log/zypp/history  | awk -F'|' 'END {print substr($1,1,10)}')
+
+        echo -e "${COLOR[BOLD]}Période couverte :${COLOR[RESET]} $first_date → $last_date"
+        echo ""
+        echo -e "${COLOR[BOLD]}Totaux :${COLOR[RESET]}"
+        echo -e "  ${COLOR[INSTALL]}▶ Installations : ${inst}${COLOR[RESET]}"
+        echo -e "  ${COLOR[REMOVE]}▶ Suppressions  : ${rem}${COLOR[RESET]}"
+        echo -e "  ${COLOR[BOLD]}▶ Total         : ${total}${COLOR[RESET]}"
+        echo ""
+
+        echo -e "${COLOR[BOLD]}Top 10 paquets les plus installés :${COLOR[RESET]}"
+        echo "$ALL_DATA" | grep "|install|" | awk -F'|' '{gsub(/ /,"",$3); print $3}' | \
+            sort | uniq -c | sort -rn | head -10 | \
+            awk '{printf "  %3d × %s\n", $1, $2}'
+        echo ""
+
+        echo -e "${COLOR[BOLD]}Top 10 paquets les plus supprimés :${COLOR[RESET]}"
+        echo "$ALL_DATA" | grep -E "\|remove ?\|" | awk -F'|' '{gsub(/ /,"",$3); print $3}' | \
+            sort | uniq -c | sort -rn | head -10 | \
+            awk '{printf "  %3d × %s\n", $1, $2}'
+        echo ""
+
+        echo -e "${COLOR[BOLD]}Activité par dépôt :${COLOR[RESET]}"
+        echo "$ALL_DATA" | awk -F'|' '{gsub(/ /,"",$7); if($7!="") print $7}' | \
+            sort | uniq -c | sort -rn | \
+            while read -r count repo; do
+                local colored
+                colored=$(color_depot "$repo")
+                printf "  %4d × %b\n" "$count" "$colored"
+            done
+        echo ""
+
+        echo -e "${COLOR[BOLD]}Activité par jour (top 10) :${COLOR[RESET]}"
+        grep -v '^#' /var/log/zypp/history | grep -E "\|install\||\|remove ?\|" | \
+            awk -F'|' '{print substr($1,1,10)}' | sort | uniq -c | sort -rn | head -10 | \
+            awk '{printf "  %3d opération(s)  %s\n", $1, $2}'
+        echo ""
+
+        echo "${MSG[quit_help]}"
+    } | less -R
+}
+
+# ==================== TRAITEMENT DES OPTIONS ====================
+check_root "$@"
+build_repo_colors
+
+# Valeurs par défaut
+FILTER_MODE=""
+PACKAGE_SEARCH=""
+LAST_DAYS=0
+STATS_MODE=false
+DATE_ARG=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)        show_help; exit 0 ;;
+        -v|--version)     show_version; exit 0 ;;
+        -i|--installs)    FILTER_MODE="installs"; shift ;;
+        -r|--removes)     FILTER_MODE="removes"; shift ;;
+        -p|--package)     PACKAGE_SEARCH="$2"; shift 2 ;;
+        -l|--last)        LAST_DAYS="$2"; shift 2 ;;
+        -s|--stats)       STATS_MODE=true; shift ;;
+        -d|--date)        DATE_ARG="$2"; validate_date_strict "$2" || exit 1; shift 2 ;;
+        *) echo "${MSG[unknown_option]} $1 — ${MSG[usage_help]}" >&2; exit 1 ;;
+    esac
+done
+
+# ==================== ROUTAGE ====================
+# Recherche paquet — toutes dates
+if [[ -n "$PACKAGE_SEARCH" ]]; then
+    search_package "$PACKAGE_SEARCH"
+    exit 0
+fi
+
+# Statistiques globales
+if $STATS_MODE; then
+    show_stats
+    exit 0
+fi
+
+# N derniers jours
+if [[ "$LAST_DAYS" -gt 0 ]]; then
+    show_last_days "$LAST_DAYS" "$FILTER_MODE"
+    exit 0
+fi
+
+# Date directe (non interactif)
+if [[ -n "$DATE_ARG" ]]; then
+    HISTORY_DATA=$(grep "^${DATE_ARG}" /var/log/zypp/history 2>/dev/null || true)
+    if [[ -z "$HISTORY_DATA" ]]; then
+        echo "${MSG[no_data]} $DATE_ARG"; exit 0
+    fi
+    read -p "${MSG[ask_output]} " output_choice
+    if [[ "$output_choice" =~ ^[Ff] ]]; then
+        create_csv "$DATE_ARG" "$HISTORY_DATA"; exit 0
+    fi
+    { display_history "$DATE_ARG" "$HISTORY_DATA" "$FILTER_MODE"
+      echo "${MSG[search_help]}"; echo "${MSG[quit_help]}"; } | less -R
+    exit 0
+fi
 
 # ==================== MODE INTERACTIF ====================
 DATE=""
@@ -287,58 +564,19 @@ else
     DATE=$(date '+%Y-%m-%d')
 fi
 
-# ==================== TRAITEMENT HISTORIQUE ====================
 HISTORY_DATA=$(grep "^${DATE}" /var/log/zypp/history 2>/dev/null || true)
 [[ -z "$HISTORY_DATA" ]] && echo "${MSG[no_data]} $DATE" && exit 0
 
-# ==================== CHOIX AFFICHAGE ====================
 read -p "${MSG[ask_output]} " output_choice
 if [[ "$output_choice" =~ ^[Ff] ]]; then
-    create_csv "$DATE" "$HISTORY_DATA"
-    exit 0
+    create_csv "$DATE" "$HISTORY_DATA"; exit 0
 fi
 
-COMMAND_DATA=$(echo "$HISTORY_DATA" | grep "|command|" || true)
-PACKAGE_DATA=$(echo "$HISTORY_DATA" | grep -E "\|install\||\|remove ?\|" || true)
-
-# ==================== AFFICHAGE AVEC COULEURS & PAGINATION ====================
-{
-    echo "${MSG[select_date]} $DATE"
-    echo "===================================================================================="
-    echo ""
-
-    if [[ -n "$COMMAND_DATA" ]]; then
-        echo "${MSG[commands_title]} - $DATE"
-        echo "===================================================================================="
-        echo "$COMMAND_DATA" | awk -F'|' 'BEGIN { print "Date/Heure          | Type    | Utilisateur        | Commande"; print "=========================================================================="} {heure = $1; type = $2; utilisateur = $3; commande = $4; for (i=5; i<=NF; i++) commande = commande "|" $i; printf "%-20s| %-7s| %-18s| %s\n", heure, type, utilisateur, commande}'
-        echo ""
-    fi
-
-    if [[ -n "$PACKAGE_DATA" ]]; then
-        echo "${MSG[packages_title]} - $DATE"
-        echo "===================================================================================="
-        echo "$PACKAGE_DATA" | awk -F'|' 'BEGIN { print "Date/Heure          | Action   | Paquet                      | Version      | Arch"} {heure = $1; action = $2; gsub(/ /, "", action); paquet = $3; version = $4; arch = $5; depot = $7; printf "%-20s| %-8s| %-27s| %-12s| %s\n", heure, action, paquet, version, arch; printf "  └─ Dépôt: %s\n", depot}' | while IFS= read -r line; do
-            if [[ "$line" =~ "Dépôt:" ]]; then
-                depot=$(echo "$line" | sed 's/.*Dépôt: //')
-                colored_depot=$(color_depot "$depot")
-                echo "$line" | sed "s/Dépôt: .*/Dépôt: $colored_depot/"
-            elif [[ "$line" =~ "install" ]]; then
-                echo "$line" | sed "s/| install /| $(color_action 'install') /"
-            elif [[ "$line" =~ "remove" ]]; then
-                echo "$line" | sed "s/| remove /| $(color_action 'remove') /"
-            else
-                echo "$line"
-            fi
-        done
-        echo ""
-    fi
-
-    echo "===================================================================================="
-    echo "${MSG[end_history]}"
-    echo ""
-    echo "${MSG[search_help]}"
-    echo "${MSG[quit_help]}"
-
-} | less -R
+{ display_history "$DATE" "$HISTORY_DATA" "$FILTER_MODE"
+  echo "===================================================================================="
+  echo "${MSG[end_history]}"
+  echo ""
+  echo "${MSG[search_help]}"
+  echo "${MSG[quit_help]}"; } | less -R
 
 exit 0

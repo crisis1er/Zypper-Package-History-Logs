@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [5.0] — 2026-04-06
+
+### Added
+- `-i / --installs` — filter installs only for a given date
+- `-r / --removes` — filter removals only for a given date
+- `-p / --package NAME` — search a package across the entire history (all dates)
+- `-l / --last N` — display the last N days of activity in one pass
+- `-s / --stats` — global statistics: totals, top 10 installed/removed packages, activity per repo and per day
+- `-d / --date YYYY-MM-DD` — specify date directly without interactive prompt
+- Flags are combinable: `-i -d 2026-04-01`, `-r -l 7`, etc.
+
+### Changed
+- Extracted `display_history()` as a reusable internal function — all display paths use the same colorized renderer
+- Updated help (`-h`) with all new flags and examples
+- Version bump: 4.2 → 5.0
+
 ## [4.2] — 2026-04-04
 
 ### Added
