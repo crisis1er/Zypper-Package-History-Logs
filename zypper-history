@@ -86,6 +86,7 @@ REPO_PALETTE=(
 # Map dépôt → couleur (construit dynamiquement)
 declare -A REPO_COLORS
 
+
 # ==================== FONCTION: Construire la map dépôt → couleur ====================
 build_repo_colors() {
     REPO_COLORS["repo-oss"]="${COLOR[REPO_OSS]}"
@@ -105,6 +106,10 @@ build_repo_colors() {
 # ==================== FONCTION: Colorer dépôt ====================
 color_depot() {
     local depot=$1
+    if [[ -z "$depot" ]]; then
+        echo -e "${COLOR[DEFAULT]}${COLOR[RESET]}"
+        return
+    fi
     local color="${REPO_COLORS[$depot]:-${COLOR[DEFAULT]}}"
     echo -e "${color}${depot}${COLOR[RESET]}"
 }
@@ -617,7 +622,13 @@ while [[ $# -gt 0 ]]; do
         -i|--installs)    FILTER_MODE="installs"; shift ;;
         -r|--removes)     FILTER_MODE="removes"; shift ;;
         -p|--package)     PACKAGE_SEARCH="$2"; shift 2 ;;
-        -l|--last)        LAST_DAYS="$2"; shift 2 ;;
+        -l|--last)
+            if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
+                LAST_DAYS="$2"; shift 2
+            else
+                LAST_DAYS=30; shift
+            fi
+            ;;
         -s|--stats)       STATS_MODE=true; shift ;;
         -g|--downgrades)
             DOWNGRADES_MODE=true
